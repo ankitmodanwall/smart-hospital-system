@@ -1,134 +1,196 @@
 import streamlit as st
-import time
 from database import *
-from queue_logic import sort_queue,calculate_wait
-from ai_engine import grok_triage
+from queue_engine import *
+from ambulance_engine import *
 
-st.set_page_config(page_title="Smart Hospital",layout="wide",page_icon="🏥")
+st.set_page_config(layout="wide")
 init_db()
 
-# =========================
-# SESSION
-# =========================
-if "logged" not in st.session_state:
-    st.session_state.logged=False
-    st.session_state.role=None
-    st.session_state.user=None
+# -------------------- CUSTOM UI --------------------
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+}
 
-# =========================
-# HEADER
-# =========================
-col1,col2=st.columns([8,1])
+.card {
+    background-color: #1f2937;
+    padding: 18px;
+    border-radius: 15px;
+    margin-bottom: 15px;
+    box-shadow: 0px 4px 15px rgba(0,0,0,0.4);
+}
+
+.stButton>button {
+    border-radius: 10px;
+    background-color: #4f46e5;
+    color: white;
+    font-weight: bold;
+}
+
+.stButton>button:hover {
+    background-color: #6366f1;
+}
+
+[data-testid="stMetric"] {
+    background-color: #111827;
+    padding: 15px;
+    border-radius: 12px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- SESSION ----------------
+if "login" not in st.session_state:
+    st.session_state.login = False
+    st.session_state.role = None
+    st.session_state.user = None
+    st.session_state.mobile = None
+
+# ---------------- HEADER ----------------
+col1, col2 = st.columns([8,1])
 with col1:
-    st.title("🏥 Smart Hospital System")
+    st.markdown("""
+    <h1 style='font-size:40px;'>🏥 SmartCare System</h1>
+    <p style='color:lightgray;'>AI Powered Hospital Queue + Rural SOS 🚑</p>
+    """, unsafe_allow_html=True)
+
 with col2:
-    if st.session_state.logged:
-        if st.button("🔓 Logout"):
-            st.session_state.logged=False
+    if st.session_state.login:
+        if st.button("Logout"):
+            st.session_state.login = False
+            st.session_state.role = None
+            st.session_state.user = None
+            st.session_state.mobile = None
             st.rerun()
 
-# =========================
-# LOGIN
-# =========================
-def login_ui():
-    st.subheader("Login / Register")
-    option=st.radio("Select",["Login","Register"])
-    user=st.text_input("Username")
-    pwd=st.text_input("Password",type="password")
-    role=st.selectbox("Role",["Admin","Doctor","Patient"])
+# =====================================================
+# LOGIN / REGISTER SYSTEM (Mobile Based)
+# =====================================================
+if not st.session_state.login:
 
-    if option=="Register":
+    st.markdown("### 👋 Welcome! Login / Register")
+
+    option = st.radio("Select", ["Login", "Register"])
+
+    name = st.text_input("Full Name")
+    mobile = st.text_input("Mobile Number")
+    password = st.text_input("Password", type="password")
+    role = st.selectbox("Role", ["Admin", "Doctor", "Patient"])
+
+    # ---------------- REGISTER ----------------
+    if option == "Register":
         if st.button("Register"):
-            if create_user(user,pwd,role):
-                st.success("Registered Successfully")
-            else:
-                st.error("Username already exists")
+            if len(mobile) != 10 or not mobile.isdigit():
+                st.error("Enter valid 10 digit mobile number")
+                st.stop()
 
-    if option=="Login":
+            if register(name, mobile, password, role):
+                st.success("Registered Successfully ✅")
+            else:
+                st.error("Mobile already registered ❌")
+
+    # ---------------- LOGIN ----------------
+    if option == "Login":
         if st.button("Login"):
-            r=authenticate_user(user,pwd)
-            if r:
-                st.session_state.logged=True
-                st.session_state.role=r
-                st.session_state.user=user
+            result = login(mobile, password)
+
+            if result:
+                st.session_state.login = True
+                st.session_state.user = result[0]
+                st.session_state.role = result[1]
+                st.session_state.mobile = mobile
                 st.rerun()
             else:
-                st.error("Invalid credentials")
+                st.error("Invalid Mobile or Password ❌")
 
-if not st.session_state.logged:
-    login_ui()
     st.stop()
 
-# =========================
+# =====================================================
 # LOAD DATA
-# =========================
-patients=get_all_patients()
-sorted_p=sort_queue(patients)
-docs=get_available_doctors()
+# =====================================================
+patients = get_patients()
+doctors = get_doctors()
+sorted_p = sort_queue(patients)
 
-# =========================
+# =====================================================
 # METRICS
-# =========================
-m1,m2=st.columns(2)
-m1.metric("Available Doctors",docs)
-m2.metric("Queue Length",len(sorted_p))
+# =====================================================
+m1, m2, m3 = st.columns(3)
+
+m1.metric("👥 Total Patients", len(sorted_p))
+m2.metric("👨‍⚕ Available Doctors", len(doctors))
+m3.metric("🚑 Active SOS",
+          len([p for p in sorted_p if check_ambulance(p)]))
+
 st.divider()
 
-# =========================
-# ADMIN
-# =========================
-if st.session_state.role=="Admin":
-    st.subheader("Admin Panel")
+# =====================================================
+# ADMIN DASHBOARD
+# =====================================================
+if st.session_state.role == "Admin":
 
-    tab1,tab2=st.tabs(["Add Patient","Live Queue"])
+    st.header("👑 Admin Dashboard")
+
+    tab1, tab2 = st.tabs(["➕ Add Patient", "📋 Live Queue"])
 
     with tab1:
-        name=st.text_input("Patient Name")
-        age=st.number_input("Age",0,120)
-        location=st.selectbox("Location",["Urban","Rural"])
-        premium=st.checkbox("₹99 Premium")
-        symptoms=st.text_area("Symptoms")
+        name = st.text_input("Patient Name")
+        age = st.number_input("Age", 0, 120)
+        loc = st.selectbox("Location", ["Urban", "Rural"])
+        sym = st.text_area("Symptoms")
 
-        if st.button("Submit"):
-            priority,label=grok_triage(symptoms,age,location)
-            uid=add_patient(name,age,location,symptoms,priority,label,premium)
-
-            if uid:
-                st.success(f"Patient Added | UID: {uid}")
+        if st.button("Add Patient"):
+            if not name or not sym:
+                st.warning("Fill all fields")
             else:
-                st.error("Patient name already exists")
+                priority = 1 if "chest" in sym.lower() else 3
+                uid = add_patient(name, age, loc, sym, priority)
 
-    with tab2:
-        st.dataframe(calculate_wait(sorted_p,docs),use_container_width=True)
+                if uid:
+                    st.success(f"Patient Added | UID: {uid}")
+                    st.rerun()
+                else:
+                    st.error("Duplicate Patient Name")
 
-# =========================
-# DOCTOR
-# =========================
-elif st.session_state.role=="Doctor":
-    st.subheader("Doctor Dashboard")
-    st.dataframe(calculate_wait(sorted_p,docs),use_container_width=True)
+# =====================================================
+# DOCTOR DASHBOARD
+# =====================================================
+elif st.session_state.role == "Doctor":
 
-# =========================
-# PATIENT
-# =========================
-elif st.session_state.role=="Patient":
-    st.subheader("My Status")
+    st.header("👨‍⚕ Doctor Dashboard")
+    st.info("Live Priority Queue")
 
-    my_data=[p for p in sorted_p if p[2]==st.session_state.user]
+# =====================================================
+# PATIENT DASHBOARD
+# =====================================================
+elif st.session_state.role == "Patient":
 
-    if my_data:
-        p=my_data[0]
-        position=sorted_p.index(p)+1
-        wait=(position-1)//docs*10
+    st.header("🧑 Patient Dashboard")
+    st.success(f"Welcome {st.session_state.user}")
 
-        st.success(f"🆔 UID: {p[1]}")
-        st.info(f"Priority: {p[6]}")
-        st.warning(f"Estimated Wait: {wait} mins")
-    else:
-        st.warning("You are not in queue")
+# =====================================================
+# LIVE QUEUE DISPLAY (ALL ROLES)
+# =====================================================
 
-# =========================
-# AUTO REFRESH
-# =========================
-time.sleep(5)
-st.rerun()
+st.markdown("### 🏥 Live Queue")
+
+if not sorted_p:
+    st.info("No patients in queue")
+else:
+    for i, p in enumerate(sorted_p):
+        wait = calculate_wait(i, len(doctors))
+
+        st.markdown(f"""
+        <div class="card">
+        🆔 <b>{p[1]}</b><br>
+        👤 {p[2]}<br>
+        📍 {p[4]}<br>
+        ⚠ Priority: {p[6]}<br>
+        👨‍⚕ Doctor: {p[7]}<br>
+        ⏳ Estimated Wait: {wait} mins
+        </div>
+        """, unsafe_allow_html=True)
+
+        if check_ambulance(p):
+            st.error("🚑 Ambulance Dispatched (Rural Emergency)")

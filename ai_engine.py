@@ -1,13 +1,17 @@
-def grok_triage(symptoms,age,location):
-    text=symptoms.lower()
+def sort_queue(patients):
+    """
+    Safe sorting:
+    Sort by priority only.
+    Lower number = higher priority.
+    """
+    try:
+        return sorted(patients, key=lambda x: x[6])
+    except:
+        return patients
 
-    if "chest" in text or "breath" in text:
-        return 1,"Emergency (Priority 1)"
 
-    if "fever" in text or "vomit" in text:
-        return 2,"Urgent (Priority 2)"
+def calculate_wait(position, total_doctors):
+    if total_doctors == 0:
+        return "No doctors available"
 
-    if age>65:
-        return 2,"Urgent (Priority 2)"
-
-    return 3,"Routine (Priority 3)"
+    return (position // total_doctors) * 15
